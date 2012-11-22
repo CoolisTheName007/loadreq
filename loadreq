@@ -385,7 +385,7 @@ vars.requiring={} --to throw error in case of recursion
 --	if upon call the loaded function does not return, it returns a table with all public values of the function environment 
 --@s e.g 'folder.other_folder.file' (no extensions such as .lua); each point is later replaced with '/'
 --	if @s has been loaded by require previously, the value returned before is returned again
---  if @s is int the process of being required, an error is thrown
+--  if @s is int the process of being required, prints waring message and returns false; should I reset vars.requiring? 
 --@path (optional, defaults first to the caller environment REQUIRE_PATH and then to @vars.path)
 --	e.g. '?;?.lua;APIS;user[1-9]/packages'
 -- 	each string surrrounded by ';' must be a glob, which is a special kind of pattern, like Lua ones but simpler.
@@ -406,7 +406,8 @@ function require(s,path,env,renv,...)--same behavior as Lua require, with the ex
 	if vars.required[s] then
 		return vars.required[s]
 	elseif vars.requiring[s] then
-		error('require: '..(s or 'nil')..' is already being loaded')
+		print('require: "',s,'" is already being loaded')
+		return false
 	else
 		path=path or getfenv(2).REQUIRE_PATH or vars.path
 		local err={}
