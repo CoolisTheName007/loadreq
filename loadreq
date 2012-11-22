@@ -1,5 +1,5 @@
 ---require implementation in pure Lua for a sandbox environment, with support for globs and full directory tree search.
-
+--Licensed under the MIT license, whatever that is.
 --locals for fast access
 local fs_list=fs.list
 local fs_isDir=fs.isDir
