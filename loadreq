@@ -394,8 +394,8 @@ vars.required_envs={} --garbage collection deletes loose envs?
 --	e.g require('A.B.c','E/?') would result in the glob E/A/B/c 
 -- 	@s and @path are passed to the functions in @vars.loaders, which must return a function in case of success or string describing the reason of failure;
 --	default are:
---		@loadGlob: uses the globs generated to iterate efficiently over the filesystem
---		(meaning it doesn't go through all available paths) and filter the right paths, from which it attempts to load.
+--		@loadGlob: uses the globs generated to iterate efficiently over the filesystem and filter the right paths
+--		(meaning it doesn't go through all available paths) from which it attempts to load.
 --		@loadSearch: filters the globs that are normal paths, and searches their entire directory trees
 --		for a file whose name (extension ripped off) matches the last section of @s, e.g. s='aaa.g'
 --		would mean looking for g or g.(whatever).
