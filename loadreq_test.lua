@@ -29,7 +29,7 @@ vars.required['t1']=nil
 writeFile('a=1','t1','Q/W/E')
 
 --simple usage here
-t1=require('t1')
+t1=require 't1'
 print(t1.a)
 
 --utilities test

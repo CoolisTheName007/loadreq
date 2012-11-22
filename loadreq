@@ -377,14 +377,15 @@ end
 
 
 vars.loaders={loadGlob,loadSearch}
-vars.path='?;?.lua'
+vars.path='?;?.lua;APIS/?;APIS/?.lua;packages/?.lua;packages/?;packages/?/init.lua'
 vars.required={} --to unrequire s do require[s]=nil
 vars.required_envs={} --garbage collection deletes loose envs?
-
+vars.requiring={} --to throw error in case of recursion
 ---require, exactly like the Lua one + some extras (comments above this deliberatedly over confident statement are welcome!)
 --	if upon call the loaded function does not return, it returns a table with all public values of the function environment 
 --@s e.g 'folder.other_folder.file' (no extensions such as .lua); each point is later replaced with '/'
 --	if @s has been loaded by require previously, the value returned before is returned again
+--  if @s is int the process of being required, an error is thrown
 --@path (optional, defaults first to the caller environment REQUIRE_PATH and then to @vars.path)
 --	e.g. '?;?.lua;APIS;user[1-9]/packages'
 -- 	each string surrrounded by ';' must be a glob, which is a special kind of pattern, like Lua ones but simpler.
@@ -404,6 +405,8 @@ vars.required_envs={} --garbage collection deletes loose envs?
 function require(s,path,env,renv,...)--same behavior as Lua require, with the extra of @path, if not nil replacing @vars.path
 	if vars.required[s] then
 		return vars.required[s]
+	elseif vars.requiring[s] then
+		error('require: '..(s or 'nil')..' is already being loaded')
 	else
 		path=path or getfenv(2).REQUIRE_PATH or vars.path
 		local err={}
@@ -415,7 +418,9 @@ function require(s,path,env,renv,...)--same behavior as Lua require, with the ex
 				setfenv(v,env)
 				renv=renv or _G
 				setmetatable(env,{__index=renv})
+				vars.requiring[s]=true
 				local r=v(...)
+				vars.requiring[s]=nil
 				if r then
 					vars.required[s]=r
 					return r
