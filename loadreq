@@ -1,0 +1,515 @@
+---require implementation in pure Lua for a sandbox environment, with support for globs and full directory tree search.
+
+--locals for fast access
+local fs_list=fs.list
+local fs_isDir=fs.isDir
+local fs_exists=fs.exists
+local string=string
+vars={} --to circumvent os.loadAPI
+vars.loaded={}
+function loadFile(path,_reload) --@_reload forces reload
+	if (vars.loaded[path]==nil) or _reload then
+		local fnFile, err = loadfile( path )
+		if not fnFile then return false, 'load:'..'path=:'..sPath..'| '..(err or 'nil') end
+		vars.loaded[path]=fnFile
+	end
+	return vars.loaded[path]
+end
+
+--helpers for @loadPerGlob
+
+---WARNING: for compatibility with Lua ?, ? was replaced by # in globs; taken from https://github.com/davidm/lua-glob-pattern , by davidm
+--only needed for filename conversion, slashes are dealt with directly for iteration purposes.
+local function globtopattern(g)
+
+  local p = "^"  -- pattern being built
+  local i = 0    -- index in g
+  local c        -- char at index i in g.
+
+  
+    -- unescape glob char
+  local function unescape()
+    if c == '\\' then
+      i = i + 1; c = string.sub(g,i,i)
+      if c == '' then
+        p = '[^]'
+        return false
+      end
+    end
+    return true
+  end
+
+  -- escape pattern char
+  local function escape(c)
+    return c:match("^%w$") and c or '%' .. c
+  end
+  -- Convert tokens at end of charset.
+  local function charset_end()
+    while 1 do
+      if c == '' then
+        p = '[^]'
+        return false
+      elseif c == ']' then
+        p = p .. ']'
+        break
+      else
+        if not unescape() then break end
+        local c1 = c
+        i = i + 1; c = string.sub(g,i,i)
+        if c == '' then
+          p = '[^]'
+          return false
+        elseif c == '-' then
+          i = i + 1; c = string.sub(g,i,i)
+          if c == '' then
+            p = '[^]'
+            return false
+          elseif c == ']' then
+            p = p .. escape(c1) .. '%-]'
+            break
+          else
+            if not unescape() then break end
+            p = p .. escape(c1) .. '-' .. escape(c)
+          end
+        elseif c == ']' then
+          p = p .. escape(c1) .. ']'
+          break
+        else
+          p = p .. escape(c1)
+          i = i - 1 -- put back
+        end
+      end
+      i = i + 1; c = string.sub(g,i,i)
+    end
+    return true
+  end
+
+  -- Convert tokens in charset.
+  local function charset()
+    i = i + 1; c = string.sub(g,i,i)
+    if c == '' or c == ']' then
+      p = '[^]'
+      return false
+    elseif c == '^' or c == '!' then
+      i = i + 1; c = string.sub(g,i,i)
+      if c == ']' then
+        -- ignored
+      else
+        p = p .. '[^'
+        if not charset_end() then return false end
+      end
+    else
+      p = p .. '['
+      if not charset_end() then return false end
+    end
+    return true
+  end
+ --Convert tokens.
+  while 1 do
+	i = i + 1; c = string.sub(g,i,i)
+    if c == '' then
+      p = p .. '$'
+      break
+    elseif c == '#' then --?->#
+      p = p .. '.'
+    elseif c == '*' then
+      p = p .. '.*'
+    elseif c == '[' then
+      if not charset() then break end
+    elseif c == '\\' then
+      i = i + 1; c = string.sub(g,i,i)
+      if c == '' then
+        p = p .. '\\$'
+        break
+      end
+      p = p .. escape(c)
+    else
+      p = p .. escape(c)
+    end
+  end
+  return p
+end
+
+---turns a glob into a table structure proper for iterPatterns.
+local function compact(g)
+	local nl={}
+	local s1
+	local n=0
+	for c in string.gmatch(g,'[\\/]*([^/\\]*)[\\/]*') do
+		--print(c)
+		if c:match('^[%w%s]*$') then
+			s1=s1 and s1..'/'..c or c
+		else
+			n=n+1
+			nl[n]={s1,globtopattern(c)}
+			s1=nil
+		end
+	end
+	if s1 then
+		if n==0 then
+			n=n+1
+			nl[n]={nil,s1}
+		else
+			nl[n][3]=s1
+		end
+	end
+	return nl
+end
+
+---iterator creator over valid paths defined by a table with the structure: {t1,...,tn}, where ti is:
+--for i<n: {dir,pat} - dir is the directory where to look for names matching the pattern pat
+--for i=n: {dir,pat,ending} -same but will combine the name (after successful match with pat) with the optional ending (can be nil) and check the resulting path
+--e.g., g={{'APIS','*'},{nil,'A'},{'B/C','#','aq/qwerty'}} will search in all subfolders of APIS for subfolders named A, and in each of those for a folder B
+--containing a folder C, and for all one-lettered folders in that folder for a folder aq containing a  folder/file named qwerty.
+local function iterPatterns(l)
+	local n=#l
+	-- print('n',n)
+	if n==0 then return function () return end end
+	if n~=0 then l[1][1]=l[1][1] or '' end
+	if n==1 and not l[1][3] then
+		done=false
+		return function ()
+				if not done and fs_exists(l[1][2]) then
+					done=true
+					return l[1][2]
+				end
+			end
+	end
+	-- pprint(l)
+	-- read()
+	local dir=l[1][1]
+	-- print('dir',dir)
+	local index={0}
+	local ts
+	ts={{dir,fs_isDir(dir) and fs_list(dir) or {}}}
+	-- read()
+	-- pprint(ts)
+	-- read()
+	local level=1
+	local t_dir
+	local _
+	return function()
+		repeat
+			index[level]=index[level]+1
+			name=ts[level][2][index[level]]
+			-- print('index:')
+			-- pprint(index)
+			-- print('level:',level)
+			-- print('name:',name)
+			-- print('dir:',dir)
+			-- print('look:',l[level][2])
+			-- print('match:',name and l[level] and l[level][2] and string.match(name,l[level][2]))
+			-- read()
+			if name==nil then
+					-- print('name is nil')
+					index[level]=nil
+					level=level-1
+					if level==0 then return end
+					dir=ts[level][1]
+			else
+				if string.match(name,l[level][2]) then
+					t_dir=dir..'/'..name
+					-- print('t_dir:',t_dir)
+					-- print('matches')
+					-- print('level:',level)
+					--pprint(l)
+					-- read()
+					if level==n then
+						-- print('last level')
+						_=l[level][3]
+						if _ then
+							t_dir=t_dir..'/'.._
+							if fs_exists(t_dir) then
+								path=t_dir
+								break
+							end
+						else
+							path=t_dir
+							break
+						end
+					elseif fs_isDir(t_dir) then
+						-- print('a dir!')
+						level=level+1
+						_=l[level][1]
+						if _ then
+							t_dir=t_dir..'/'.._
+							if fs_exists(t_dir) then
+								dir=t_dir
+								ts[level]={dir,fs_list(dir)}
+								index[level]=0
+							else
+								level=level-1
+							end
+						else
+							dir=t_dir
+							ts[level]={dir,fs_list(dir)}
+							index[level]=0
+						end
+					end
+				end
+			end
+		until false
+		return path, index
+	end
+end
+
+---iterator creator, over the valid paths defined by glob @g, e.g */filenumber?to
+-- see the unix part of the table at http://en.wikipedia.org/wiki/Glob_(programming) .
+--@treturn string path to matching of the dir
+--@usage
+--for path in search.iterGlob('*/stuff?/a*') do
+--	print(path)
+--end
+--APIS/stuff1/a.lua
+--var/stuff2/a.var
+function iterGlob(g)
+	return iterPatterns(compact(g))
+end
+
+loadGlob = function (s,p) --for paths separated by ';' in @p 
+	s=string.gsub(s,'%.','/')
+	local err={}
+	for P in string.gmatch(p,';?([^;]*);?') do
+		local g=string.gsub(P,'%?',s)
+		for path in iterGlob(g) do
+			if not fs_isDir(path) then
+				local f,e=loadFile(path)
+				if f then
+					--print(path)
+					return f
+				else
+					table.insert(err,'Module '..s..' in '..path..':'..e)
+				end
+			end
+		end
+	end
+	return table.concat(err,'\n')
+end
+
+
+--'helpers' for @loadFullSearch
+
+function iterFiles(dir,depth)
+	dir=dir or ''
+	local index={0}
+	local dir_index={0}
+	local ts={{dir,fs_list(dir),{}}}
+	local level=1
+	local t_dir
+	return function()
+		repeat
+			index[level]=index[level]+1
+			name=ts[level][2][index[level]]
+			if name==nil then
+				if (not ts[level][4]) and ts[level][3][1] then
+					ts[level][4]=true
+					ts[level][2],ts[level][3]=ts[level][3],ts[level][2]
+					index[level]=0
+				else
+					level=level-1
+					if level==0 then return end
+					dir=ts[level][1]
+				end
+			else
+				t_dir=ts[level][1]..'/'..name
+				if fs_isDir(t_dir) then
+					if ts[level][4] then
+						if depth~=level then
+							level=level+1
+							dir=t_dir
+							ts[level]={dir,fs_list(dir),{}}
+							index[level]=0
+							dir_index[level]=0
+						else
+						end
+					else
+						dir_index[level]=dir_index[level]+1
+						ts[level][3][dir_index[level]]=name
+					end
+				else
+					break
+				end
+			end
+		until false
+		return dir..'/'..name
+	end
+end
+function getNameExpansion(s) --returns name and expansion from a filepath @s
+	--s string = filename
+	--returns: name, expansion
+	--Example
+	--print(getNameExpansion('filename.lua.kl'))
+	--filename
+	--lua.kl
+	local _,_,name,expa=string.find(s, '([^%./\\]*)%.(.*)$')
+	return name or s,expa
+end
+
+loadSearch = function (s,p)
+	s=string.match(s,'%.?([^%.]*)$') --extracts last 'extension',e.g. 'a.bb.c'->'c'
+	local err={}
+	local paths={}
+	for P in string.gmatch(p,';?([^;]*);?') do
+		paths[#paths+1]=P
+	end
+	paths[#paths+1]=''
+	for _,P in ipairs(paths) do
+		if fs_isDir(P) then
+			for path in iterFiles(P) do
+				if (not fs_isDir(path)) and getNameExpansion(name)==s then
+					local f,e=loadFile(path)
+					if f then
+						--print(path)
+						return f
+					else
+						table.insert(err,'loadFullSearch: Module '..s..' in path'..path..':'..e)
+					end
+				end
+			end
+		end
+	end
+	if not err[1] then
+		table.insert(err,'loadFullSearch: Module '..s..' not found')
+	end
+	return table.concat(err,'\n')
+end
+
+
+
+vars.loaders={loadGlob,loadSearch}
+vars.path='?;?.lua'
+vars.required={} --to unrequire s do require[s]=nil
+vars.required_envs={} --garbage collection deletes loose envs?
+
+---require, exactly like the Lua one + some extras (comments above this deliberatedly over confident statement are welcome!)
+--	if upon call the loaded function does not return, it returns a table with all public values of the function environment 
+--@s e.g 'folder.other_folder.file' (no extensions such as .lua); each point is later replaced with '/'
+--	if @s has been loaded by require previously, the value returned before is returned again
+--@path (optional, defaults first to the caller environment REQUIRE_PATH and then to @vars.path)
+--	e.g. '?;?.lua;APIS;user[1-9]/packages'
+-- 	each string surrrounded by ';' must be a glob, which is a special kind of pattern, like Lua ones but simpler.
+--	rules are the same as the ones defined in the unix part of the table at http://en.wikipedia.org/wiki/Glob_(programming)
+--	WARNING in this glob each '?' (the wildcard that matches one character is now # instead of ?) is replaced by @s
+--	(after transforming '.' in '/')
+--	e.g require('A.B.c','E/?') would result in the glob E/A/B/c 
+-- 	@s and @path are passed to the functions in @vars.loaders, which must return a function in case of success or string describing the reason of failure;
+--	default are:
+--		@loadGlob: uses the globs generated to iterate efficiently over the filesystem
+--		(meaning it doesn't go through all available paths) and filter the right paths, from which it attempts to load.
+--		@loadSearch: filters the globs that are normal paths, and searches their entire directory trees
+--		for a file whose name (extension ripped off) matches the last section of @s, e.g. s='aaa.g'
+--		would mean looking for g or g.(whatever).
+--environments: sets the function loaded from file env's to @env (default is the caler's env) and the metatable of @env to {__index=@renv} 
+--@... args to be passed to the loaded function
+function require(s,path,env,renv,...)--same behavior as Lua require, with the extra of @path, if not nil replacing @vars.path
+	if vars.required[s] then
+		return vars.required[s]
+	else
+		path=path or getfenv(2).REQUIRE_PATH or vars.path
+		local err={}
+		for _,loader in ipairs(vars.loaders) do
+			local v=loader(s,path)
+			if type(v)=='function' then
+				env=env or {}
+				vars.required_envs[s]=env
+				setfenv(v,env)
+				renv=renv or _G
+				setmetatable(env,{__index=renv})
+				local r=v(...)
+				if r then
+					vars.required[s]=r
+					return r
+				else
+					local t={}
+					for i,v in pairs(env) do t[i]=v end
+					vars.required[s]=t
+					return t
+				end
+			else
+				table.insert(err,tostring(v))
+			end
+		end
+		error(table.concat(err,'\n'))
+	end
+end
+
+--utilities
+function set_env(f,env,renv)--sets @f 's env to @env (default new table {}) and the metatable of @env to {__index=@renv (default _G)}
+	local env = env or {}
+	local renv = renv or _G
+	setmetatable( env, { __index = renv } )
+	setfenv( f, env )
+end
+
+function str(s,env,renv) --loads string @s setting it's env to @env (default is the caler's env) and the metatable of @env to {__index=@renv}
+	local f, err = loadstring( s )
+	if not f then error( 'loadreq.str:'..(err or 'nil') ,2) end
+	set_env(f,env or getfenv(2),renv)
+	return f
+end
+
+function file(p,env,renv) --(re)loads file in path @p setting it's env to @env and the metatable of @env to {__index=@renv}
+	f=loadfile(p)
+	if not f then error('file',2) end
+	set_env(f,env,renv)
+	return f
+end
+
+function run(p,args,env,renv)--runs file in path @p and unpacks @args to get arguments for the file; sets it's env to @env (default is the caler's env) and the metatable of @env to {__index=@renv}
+	f=file(p,env,renv)
+	args=args or {}
+	return f(unpack(args))
+end
+
+--protection utilities; these are meant more as a warning than OS-grade protection
+vars.bProtected=true
+local function protected_access(t,k,v)
+	if vars.bProtected then
+		error( "Attempt to write to protected" )
+	else
+		rawset( t, k, v )
+	end
+end
+function protect(_t)--shallow protection for tables (slows down access to the tables themselves, not to their values, e.g. local t.a=protected_table.a print(a) should do the trick)
+	local meta = getmetatable( _t )
+	if meta == "Protected" then
+		-- already hard protected
+		return
+	end
+	if meta then
+		meta.__newindex = protected_access
+	else
+		setmetatable( _t, {__newindex = protected_access} )
+	end
+end
+function unprotect(_t)--removes the shallow protection
+	local meta = getmetatable( _t )
+	if not meta then
+		return
+	end
+	vars.bProtected=false
+	meta.__newindex=nil
+	vars.bProtected=true
+end
+
+function permaProtect(_t) --same as the os.loadAPI does
+	local meta = getmetatable( _t )
+	if meta == "Protected" then
+		-- already hard protected
+		return
+	end
+	setmetatable( _t, {
+		__newindex = function( t, k, v )
+			if bProtected then
+				error( "Attempt to write to protected" )
+			else
+				rawset( t, k, v )
+			end
+		end,
+		__metatable = 'Protected',
+	} )
+end
+
+
+--compatibility for os.loadAPI
+env=getfenv() --this keeps the env from being collected to garbage?
