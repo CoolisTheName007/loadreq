@@ -10,7 +10,7 @@ vars.loaded={}
 function loadFile(path,_reload) --@_reload forces reload
 	if (vars.loaded[path]==nil) or _reload then
 		local fnFile, err = loadfile( path )
-		if not fnFile then return false, 'load:'..'path=:'..sPath..'| '..(err or 'nil') end
+		if not fnFile then return false, 'load:'..'path=:'..path..'| '..(err or 'nil') end
 		vars.loaded[path]=fnFile
 	end
 	return vars.loaded[path]
@@ -137,7 +137,7 @@ local function compact(g)
 	local n=0
 	for c in string.gmatch(g,'[\\/]*([^/\\]*)[\\/]*') do
 		--print(c)
-		if c:match('^[%w%s]*$') then
+		if c:match('^[%w%s%.]*$') then
 			s1=s1 and s1..'/'..c or c
 		else
 			n=n+1
@@ -146,13 +146,21 @@ local function compact(g)
 		end
 	end
 	if s1 then
+		-- print('s1=',s1)
 		if n==0 then
+			-- print('n==0')
 			n=n+1
-			nl[n]={nil,s1}
+			nl[n]={s1}
 		else
 			nl[n][3]=s1
 		end
 	end
+	-- for i,v in pairs(nl) do
+		-- print(i)
+		-- print(v[1])
+		-- print(v[2])
+	-- end
+	-- read()
 	return nl
 end
 
@@ -164,14 +172,15 @@ end
 local function iterPatterns(l)
 	local n=#l
 	-- print('n',n)
-	if n==0 then return function () return end end
-	if n~=0 then l[1][1]=l[1][1] or '' end
-	if n==1 and not l[1][3] then
-		done=false
+	if n==0 then return function () return  end end
+	if n==1 and not l[1][2] and fs_exists(l[1][1]) then
+		local done=false
 		return function ()
-				if not done and fs_exists(l[1][2]) then
+				if not done then
 					done=true
-					return l[1][2]
+					return l[1][1]
+				else
+					return
 				end
 			end
 	end
@@ -266,23 +275,28 @@ function iterGlob(g)
 	return iterPatterns(compact(g))
 end
 
-loadGlob = function (s,p) --for paths separated by ';' in @p 
+loadGlob = function (s,p) --for paths separated by ';' in @p
 	s=string.gsub(s,'%.','/')
 	local err={}
+	local g,f,e
 	for P in string.gmatch(p,';?([^;]*);?') do
-		local g=string.gsub(P,'%?',s)
+		g=string.gsub(P,'%?',s)
+		-- print('g ',g)
 		for path in iterGlob(g) do
 			if not fs_isDir(path) then
-				local f,e=loadFile(path)
+				f,e=loadFile(path)
 				if f then
-					--print(path)
+					-- print('glob ',g,' success:',path)
 					return f
 				else
 					table.insert(err,'Module '..s..' in '..path..':'..e)
 				end
 			end
 		end
+		table.insert(err,'No valid results for glob '..g)
 	end
+	if not err[1] then err[1]='No paths to search' end 
+	-- print(table.concat(err,'\n'))
 	return table.concat(err,'\n')
 end
 
@@ -346,6 +360,7 @@ function getNameExpansion(s) --returns name and expansion from a filepath @s
 end
 
 loadSearch = function (s,p)
+	-- print('loadSearch:',s,p)
 	s=string.match(s,'%.?([^%.]*)$') --extracts last 'extension',e.g. 'a.bb.c'->'c'
 	local err={}
 	local paths={}
@@ -356,13 +371,13 @@ loadSearch = function (s,p)
 	for _,P in ipairs(paths) do
 		if fs_isDir(P) then
 			for path in iterFiles(P) do
-				if (not fs_isDir(path)) and getNameExpansion(name)==s then
+				if getNameExpansion(name)==s then
 					local f,e=loadFile(path)
 					if f then
-						--print(path)
+						-- print('search in ',P,' success:',path)
 						return f
 					else
-						table.insert(err,'loadFullSearch: Module '..s..' in path'..path..':'..e)
+						table.insert(err,'loadSearch: Module '..s..' in path'..path..':'..e)
 					end
 				end
 			end
@@ -377,7 +392,8 @@ end
 
 
 vars.loaders={loadGlob,loadSearch}
-vars.path='?;?.lua;APIS/?;APIS/?.lua;packages/?.lua;packages/?;packages/?/init.lua'
+vars.path='?;?.lua;?/init.lua;APIS/?;APIS/?.lua;APIS/?/init.lua;packages/?;packages/?.lua;packages/?/init.lua'
+
 vars.required={} --to unrequire s do require[s]=nil
 vars.required_envs={} --garbage collection deletes loose envs?
 vars.requiring={} --to throw error in case of recursion
@@ -402,14 +418,22 @@ vars.requiring={} --to throw error in case of recursion
 --		would mean looking for g or g.(whatever).
 --environments: sets the function loaded from file env's to @env (default is the caler's env) and the metatable of @env to {__index=@renv} 
 --@... args to be passed to the loaded function
+
 function require(s,path,env,renv,...)--same behavior as Lua require, with the extra of @path, if not nil replacing @vars.path
+	-- print(env)
+	-- print(path,getfenv(2).REQUIRE_PATH,vars.path)
+	-- read()
 	if vars.required[s] then
+		-- print('already done')
 		return vars.required[s]
 	elseif vars.requiring[s] then
 		print('require: "',s,'" is already being loaded')
 		return false
 	else
 		path=path or getfenv(2).REQUIRE_PATH or vars.path
+		-- if getfenv(2).REQUIRE_PATH then print(s,path,env,renv) end
+		-- print('path=',path)
+		-- read()
 		local err={}
 		for _,loader in ipairs(vars.loaders) do
 			local v=loader(s,path)
@@ -420,7 +444,9 @@ function require(s,path,env,renv,...)--same behavior as Lua require, with the ex
 				renv=renv or _G
 				setmetatable(env,{__index=renv})
 				vars.requiring[s]=true
+				-- print('running ',s)
 				local r=v(...)
+				-- print('done')
 				vars.requiring[s]=nil
 				if r then
 					vars.required[s]=r
@@ -514,6 +540,16 @@ function permaProtect(_t) --same as the os.loadAPI does
 		end,
 		__metatable = 'Protected',
 	} )
+end
+
+--module utilities
+
+function module(M) --copies env of the caller to table @M (default {}) and returns it
+	M=M or {}
+	for i,v in getfenv(2) do
+		M[i]=v
+	end
+	return M
 end
 
 
