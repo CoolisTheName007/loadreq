@@ -10,7 +10,7 @@ vars.loaded={}
 function loadFile(path,_reload) --@_reload forces reload
 	if (vars.loaded[path]==nil) or _reload then
 		local fnFile, err = loadfile( path )
-		if not fnFile then return false, 'load:'..'path=:'..path..'| '..(err or 'nil') end
+		if not fnFile then error('load:'..'path=:'..path..'| '..(err or 'nil'),2) end
 		vars.loaded[path]=fnFile
 	end
 	return vars.loaded[path]
@@ -136,7 +136,7 @@ local function compact(g)
 	local s1
 	local n=0
 	for c in string.gmatch(g,'[\\/]*([^/\\]*)[\\/]*') do
-		--print(c)
+		-- print(c)
 		if c:match('^[%w%s%.]*$') then
 			s1=s1 and s1..'/'..c or c
 		else
@@ -284,6 +284,7 @@ loadGlob = function (s,p) --for paths separated by ';' in @p
 		-- print('g ',g)
 		for path in iterGlob(g) do
 			if not fs_isDir(path) then
+				-- print(path)
 				f,e=loadFile(path)
 				if f then
 					-- print('glob ',g,' success:',path)
@@ -384,7 +385,7 @@ loadSearch = function (s,p)
 		end
 	end
 	if not err[1] then
-		table.insert(err,'loadFullSearch: Module '..s..' not found')
+		table.insert(err,'loadSearch: Module '..s..' not found')
 	end
 	return table.concat(err,'\n')
 end
@@ -445,6 +446,7 @@ function require(s,path,env,renv,...)--same behavior as Lua require, with the ex
 				setmetatable(env,{__index=renv})
 				vars.requiring[s]=true
 				-- print('running ',s)
+				-- read()
 				local r=v(...)
 				-- print('done')
 				vars.requiring[s]=nil
@@ -461,7 +463,7 @@ function require(s,path,env,renv,...)--same behavior as Lua require, with the ex
 				table.insert(err,tostring(v))
 			end
 		end
-		error(table.concat(err,'\n'))
+		error(table.concat(err,'\n'),2)
 	end
 end
 
