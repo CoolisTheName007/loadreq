@@ -463,8 +463,7 @@ function sufix(s)
 	return string.gsub('@/?;@/?.lua;@/?/init.lua;@/?/?.lua;@/?/?;@','@',s)
 end
 
---[[
-
+--[[require(s,paths,...)
 -acquires @paths variable;
 	@paths is a string, made of globs separated by ';'
 	globs can be normal paths or contain special characters ('?' and others ('?' was replaced by '#') as described here: see the unix part of the table at http://en.wikipedia.org/wiki/Glob_(programming))
