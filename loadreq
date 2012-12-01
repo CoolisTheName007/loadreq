@@ -392,6 +392,16 @@ vars.required_envs={} --to prevent garbage collection
 vars.requiring={} --to throw error in case of recursive requiring;
 
 
+--[[lua_requirer(path,cenv,env,renv,args)
+if the file has been loaded already returns previous value;
+if the file is being loaded returns nil, error_message
+else:
+loads file in @path;
+sets it's env to @env, default {} with metatable with __index set to @renv, default _G;
+calls the function with unpack(@args) and returns and saves either
+	the function return
+	a shallow copy of the functions environment
+]]
 function lua_requirer(path,cenv,env,renv,args)
 	if vars.requiring[path] then
 		return nil, s..' in path '..path..' is being loaded'
