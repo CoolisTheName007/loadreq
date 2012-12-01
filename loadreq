@@ -5,7 +5,7 @@ local fs_list=fs.list
 local fs_isDir=fs.isDir
 local fs_exists=fs.exists
 local string=string
-vars={} --to circumvent os.loadAPI
+vars={} --to allow edition
 vars.loaded={}
 function loadFile(path,_reload) --@_reload forces reload
 	if (vars.loaded[path]==nil) or _reload then
@@ -275,6 +275,7 @@ function iterGlob(g)
 	return iterPatterns(compact(g))
 end
 
+--iterator over glob @g with ? replaced by @s
 searchGlob = function (g,s)
 	g=string.gsub(g,'%?',s)
 	--print(g)
@@ -357,6 +358,7 @@ function getDir(s) --returns directory from filepath @s
 	return string.match(s,'^(.*)/') or '/'
 end
 
+--iterator over directory @p searching for @p...@s
 searchTree = function (p,s)
 	if fs_isDir(p) then
 		if p=='/' then p='' end
@@ -380,34 +382,15 @@ searchTree = function (p,s)
 end
 
 
-
+--add your iterators here; must take (p,s) where p is where to search and s is what to search for.
 vars.finders={searchGlob,searchTree}
 vars.paths='?;?.lua;?/init.lua;APIS/?;APIS/?.lua;APIS/?/init.lua;packages/?;packages/?.lua;packages/?/init.lua;packages/?/?;packages/?/?.lua;/'
 
+--helper vars for lua_requirer
 vars.required={} --to unrequire filepath s do require[s]=nil
-vars.required_envs={} --garbage collection deletes loose envs?
-vars.requiring={} --to throw error in case of recursion
----require, exactly like the Lua one + some extras (comments above this deliberatedly over confident statement are welcome!)
---	if upon call the loaded function does not return, it returns a table with all public values of the function environment 
---@s e.g 'folder.other_folder.file' (no extensions such as .lua); each point is later replaced with '/'
---	if @s has been loaded by require previously, the value returned before is returned again
---  if @s is int the process of being required, prints warning message and returns false; should I reset vars.requiring? 
---@path (optional, defaults first to the caller environment REQUIRE_PATH, then to @vars.path)
---	e.g. '?;?.lua;APIS;user[1-9]/packages'
--- 	each string surrrounded by ';' must be a glob, which is a special kind of pattern, like Lua ones but simpler.
---	rules are the same as the ones defined in the unix part of the table at http://en.wikipedia.org/wiki/Glob_(programming)
---	WARNING in this glob each '?' (the wildcard that matches one character is now # instead of ?) is replaced by @s
---	(after transforming '.' in '/')
---	e.g require('A.B.c','E/?') would result in the glob E/A/B/c 
--- 	@s and @path are passed to the functions in @vars.loaders, which must return a function, path_of_file in case of success or string describing the reason of failure;
---	default are:
---		@loadGlob: uses the globs generated to iterate efficiently over the filesystem and filter the right paths
---		(meaning it doesn't go through all available paths) from which it attempts to load.
---		@loadSearch: filters the globs that are normal paths, and searches their entire directory trees
---		for a file whose name (extension ripped off) matches the last section of @s, e.g. s='aaa.g'
---		would mean looking for g or g.(whatever).
---environments: sets the function loaded from file env's to @env (default is the caler's env) and the metatable of @env to {__index=@renv} 
---@... args to be passed to the loaded function
+vars.required_envs={} --to prevent garbage collection
+vars.requiring={} --to throw error in case of recursive requiring;
+
 
 function lua_requirer(path,cenv,env,renv,args)
 	if vars.requiring[path] then
@@ -440,6 +423,7 @@ function lua_requirer(path,cenv,env,renv,args)
 	end
 end
 
+--replacement for os_loadAPI that keeps APIS to the caller's env
 old_os_loadAPI=os.loadAPI
 new_os_loadAPI=function(p)
 	local cenv=getfenv(2)
@@ -453,13 +437,61 @@ new_os_loadAPI=function(p)
 	end
 end
 
+--[[add your requirers here;
+each must 
+take as arguments (path,cenv,...) where
+	path is the path to required file
+	cenv is the environment of the caller of @require
+	... are extra arguments passed to @require
+return
+	one value to be returned by @require
+	false|nil, error_message in case of failure
+]]
 vars.requirers={lua_requirer}
 
 function sufix(s)
 	return string.gsub('@/?;@/?.lua;@/?/init.lua;@/?/?.lua;@/?/?;@','@',s)
 end
 
-function require(s,paths,...)--same behavior as Lua require, with the extra of @path, if not nil replacing @vars.path
+--[[
+
+-acquires @paths variable;
+	@paths is a string, made of globs separated by ';'
+	globs can be normal paths or contain special characters ('?' and others ('?' was replaced by '#') as described here: see the unix part of the table at http://en.wikipedia.org/wiki/Glob_(programming))
+defaults to:
+	0-arg @paths
+		Example:
+		myAPI=require('myFolder2.myAPI','myFolder/?.lua') 
+	1-REQUIRE_PATH in the caller's path, if existent
+		Example:
+		REQUIRE_PATH='myFolder/?.lua'
+		myAPI=require'myFolder2.myAPI' 
+	2-directory named PACKAGE_NAME in FILE_PATH, if defined in the caller's environment
+	with sufixes appended by @sufix and concatenated with @vars.paths.
+	FILE_PATH is set, for instance, by lua_loader in the files it loads.
+		Example:
+		(FILE_PATH='myFolder/myFolder3/myFolder/runningFile')
+		PACKAGE_NAME='myFolder'
+		myAPI=require'myAPI' --@paths is 'myFolder/?;myFolder/?.lua;myFolder/?/init.lua;myFolder/?/?.lua;myFolder/?/?;myFolder'
+	3-directory of FILE_PATH, if defined
+	with sufixes appended by @sufix and concatenated with @vars.paths.
+		Example:
+		(FILE_PATH='myFolder/runningFile')
+		myAPI=require'myAPI' --@paths is 'myFolder/?;myFolder/?.lua;myFolder/?/init.lua;myFolder/?/?.lua;myFolder/?/?;myFolder'
+	4-@vars.paths as set in loadreq.vars.path
+-replaces '.' in @s by '/' and '..' by '.'
+-for all globs in @paths:
+ replaces '?' with @s
+ -	for all iterators in vars.finders iterates over the paths returned;
+	default iterators:
+		searchGlob: paths that match the glob
+		searchTree: only for globs that are directory paths: paths that are in the directory tree of glob		
+-for each path, calls the loaders sequentially until one succeds, 
+in which case it returns the first value that the loader returns;
+else accumulates the second value returned as an error message
+-in case of failure, errors
+]]
+function require(s,paths,...)
 	local caller_env=getfenv(2)
 	if paths then
 	elseif caller_env.REQUIRE_PATH then
@@ -467,7 +499,7 @@ function require(s,paths,...)--same behavior as Lua require, with the extra of @
 	elseif caller_env.PACKAGE_NAME and caller_env.FILE_PATH then
 		paths=sufix(string.match(caller_env.FILE_PATH,'^(.*'..caller_env.PACKAGE_NAME..')'))..';'..vars.paths
 	elseif	caller_env.FILE_PATH then
-		paths=getDir(caller_env.FILE_PATH)..';'..vars.paths
+		paths=sufix(getDir(caller_env.FILE_PATH))..';'..vars.paths
 	else
 		paths=vars.paths
 	end
@@ -588,5 +620,4 @@ function module(M) --copies env of the caller to table @M (default {}) and retur
 end
 
 
---compatibility for os.loadAPI
-env=getfenv() --this keeps the env from being collected to garbage?
+env=getfenv() --this keeps the env from being collected to garbage
