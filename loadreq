@@ -275,30 +275,24 @@ function iterGlob(g)
 	return iterPatterns(compact(g))
 end
 
-loadGlob = function (s,p) --for paths separated by ';' in @p
-	s=string.gsub(s,'%.','/')
-	local err={}
-	local g,f,e
-	for P in string.gmatch(p,';?([^;]*);?') do
-		g=string.gsub(P,'%?',s)
-		-- print('g ',g)
-		for path in iterGlob(g) do
-			if not fs_isDir(path) then
-				-- print(path)
-				f,e=loadFile(path)
-				if f then
-					-- print('glob ',g,' success:',path)
-					return f
-				else
-					table.insert(err,'Module '..s..' in '..path..':'..e)
+searchGlob = function (g,s)
+	g=string.gsub(g,'%?',s)
+	--print(g)
+	
+	local iter=iterGlob(g)
+	local path
+	return function ()
+		repeat
+			path=iter()
+			if path then
+				if not fs_isDir(path) then
+					return path
 				end
+			else
+				break
 			end
-		end
-		table.insert(err,'No valid results for glob '..g)
+		until false
 	end
-	if not err[1] then err[1]='No paths to search' end 
-	-- print(table.concat(err,'\n'))
-	return table.concat(err,'\n')
 end
 
 
@@ -359,58 +353,53 @@ function getNameExpansion(s) --returns name and expansion from a filepath @s
 	local _,_,name,expa=string.find(s, '([^%./\\]*)%.(.*)$')
 	return name or s,expa
 end
+function getDir(s) --returns directory from filepath @s
+	return string.match(s,'^(.*)/') or '/'
+end
 
-loadSearch = function (s,p)
-	-- print('loadSearch:',s,p)
-	s=string.match(s,'%.?([^%.]*)$') --extracts last 'extension',e.g. 'a.bb.c'->'c'
-	local err={}
-	local paths={}
-	for P in string.gmatch(p,';?([^;]*);?') do
-		paths[#paths+1]=P
-	end
-	paths[#paths+1]=''
-	for _,P in ipairs(paths) do
-		if fs_isDir(P) then
-			for path in iterFiles(P) do
-				if getNameExpansion(name)==s then
-					local f,e=loadFile(path)
-					if f then
-						-- print('search in ',P,' success:',path)
-						return f
-					else
-						table.insert(err,'loadSearch: Module '..s..' in path'..path..':'..e)
+searchTree = function (p,s)
+	if fs_isDir(p) then
+		if p=='/' then p='' end
+		local iter=iterFiles(p)
+		local path
+		return function ()
+			repeat
+				path=iter()
+				if path then
+					if string.match(path,s..'$') and not string.match(path,'[^/]'..s..'$') then
+						return path
 					end
+				else
+					break
 				end
-			end
+			until false
 		end
+	else
+		return function() end
 	end
-	if not err[1] then
-		table.insert(err,'loadSearch: Module '..s..' not found')
-	end
-	return table.concat(err,'\n')
 end
 
 
 
-vars.loaders={loadGlob,loadSearch}
-vars.path='?;?.lua;?/init.lua;APIS/?;APIS/?.lua;APIS/?/init.lua;packages/?;packages/?.lua;packages/?/init.lua'
+vars.finders={searchGlob,searchTree}
+vars.paths='?;?.lua;?/init.lua;APIS/?;APIS/?.lua;APIS/?/init.lua;packages/?;packages/?.lua;packages/?/init.lua;packages/?/?;packages/?/?.lua;/'
 
-vars.required={} --to unrequire s do require[s]=nil
+vars.required={} --to unrequire filepath s do require[s]=nil
 vars.required_envs={} --garbage collection deletes loose envs?
 vars.requiring={} --to throw error in case of recursion
 ---require, exactly like the Lua one + some extras (comments above this deliberatedly over confident statement are welcome!)
 --	if upon call the loaded function does not return, it returns a table with all public values of the function environment 
 --@s e.g 'folder.other_folder.file' (no extensions such as .lua); each point is later replaced with '/'
 --	if @s has been loaded by require previously, the value returned before is returned again
---  if @s is int the process of being required, prints waring message and returns false; should I reset vars.requiring? 
---@path (optional, defaults first to the caller environment REQUIRE_PATH and then to @vars.path)
+--  if @s is int the process of being required, prints warning message and returns false; should I reset vars.requiring? 
+--@path (optional, defaults first to the caller environment REQUIRE_PATH, then to @vars.path)
 --	e.g. '?;?.lua;APIS;user[1-9]/packages'
 -- 	each string surrrounded by ';' must be a glob, which is a special kind of pattern, like Lua ones but simpler.
 --	rules are the same as the ones defined in the unix part of the table at http://en.wikipedia.org/wiki/Glob_(programming)
 --	WARNING in this glob each '?' (the wildcard that matches one character is now # instead of ?) is replaced by @s
 --	(after transforming '.' in '/')
 --	e.g require('A.B.c','E/?') would result in the glob E/A/B/c 
--- 	@s and @path are passed to the functions in @vars.loaders, which must return a function in case of success or string describing the reason of failure;
+-- 	@s and @path are passed to the functions in @vars.loaders, which must return a function, path_of_file in case of success or string describing the reason of failure;
 --	default are:
 --		@loadGlob: uses the globs generated to iterate efficiently over the filesystem and filter the right paths
 --		(meaning it doesn't go through all available paths) from which it attempts to load.
@@ -420,51 +409,93 @@ vars.requiring={} --to throw error in case of recursion
 --environments: sets the function loaded from file env's to @env (default is the caler's env) and the metatable of @env to {__index=@renv} 
 --@... args to be passed to the loaded function
 
-function require(s,path,env,renv,...)--same behavior as Lua require, with the extra of @path, if not nil replacing @vars.path
-	-- print(env)
-	-- print(path,getfenv(2).REQUIRE_PATH,vars.path)
-	-- read()
-	if vars.required[s] then
-		-- print('already done')
-		return vars.required[s]
-	elseif vars.requiring[s] then
-		print('require: "',s,'" is already being loaded')
-		return false
+function lua_requirer(path,cenv,env,renv,args)
+	if vars.requiring[path] then
+		return nil, s..' in path '..path..' is being loaded'
+	elseif vars.required[path] then
+		return vars.required[path]
+	end
+	
+	local f,e=loadfile(path)
+	if not f then
+		return nil,'path='..path..'|lua_requirer:loadfile:'..e
+	end
+	env=env or {}
+	env.FILE_PATH=path
+	vars.required_envs[path]=env
+	setfenv(f,env)
+	renv=renv or _G
+	setmetatable(env,{__index=renv})
+	vars.requiring[path]=true
+	local r=f(args and unpack(args)) --raises useful error/traceback, no need to tamper with
+	vars.requiring[path]=nil
+	if r then
+		vars.required[path]=r
+		return r
 	else
-		path=path or getfenv(2).REQUIRE_PATH or vars.path
-		-- if getfenv(2).REQUIRE_PATH then print(s,path,env,renv) end
-		-- print('path=',path)
-		-- read()
-		local err={}
-		for _,loader in ipairs(vars.loaders) do
-			local v=loader(s,path)
-			if type(v)=='function' then
-				env=env or {}
-				vars.required_envs[s]=env
-				setfenv(v,env)
-				renv=renv or _G
-				setmetatable(env,{__index=renv})
-				vars.requiring[s]=true
-				-- print('running ',s)
-				-- read()
-				local r=v(...)
-				-- print('done')
-				vars.requiring[s]=nil
-				if r then
-					vars.required[s]=r
-					return r
-				else
-					local t={}
-					for i,v in pairs(env) do t[i]=v end
-					vars.required[s]=t
-					return t
+		local t={}
+		for i,v in pairs(env) do t[i]=v end
+		vars.required[path]=t
+		return t
+	end
+end
+
+old_os_loadAPI=os.loadAPI
+new_os_loadAPI=function(p)
+	local cenv=getfenv(2)
+	local r,e=loadreq.lua_requirer(p,cenv)
+	if r then
+		local name=getNameExpansion(p)
+		protect(r)
+		cenv[p]=r
+	else
+		error('os.loadAPI(loadreq version):'..e..'\n'..'path='..p,2)
+	end
+end
+
+vars.requirers={lua_requirer}
+
+function sufix(s)
+	return string.gsub('@/?;@/?.lua;@/?/init.lua;@/?/?.lua;@/?/?;@','@',s)
+end
+
+function require(s,paths,...)--same behavior as Lua require, with the extra of @path, if not nil replacing @vars.path
+	local caller_env=getfenv(2)
+	if paths then
+	elseif caller_env.REQUIRE_PATH then
+		paths=caller_env.REQUIRE_PATH
+	elseif caller_env.PACKAGE_NAME and caller_env.FILE_PATH then
+		paths=sufix(string.match(caller_env.FILE_PATH,'^(.*'..caller_env.PACKAGE_NAME..')'))..';'..vars.paths
+	elseif	caller_env.FILE_PATH then
+		paths=getDir(caller_env.FILE_PATH)..';'..vars.paths
+	else
+		paths=vars.paths
+	end
+	
+	--replace . by / and .. by . 
+	s=string.gsub(s,'([^%.])%.([^%.])','%1/%2') 
+	s=string.gsub(s,'^%.([^%.])','/%1')
+	s=string.gsub(s,'%.%.','.')
+	local err={}
+	for _,finder in ipairs(vars.finders) do
+		for search_path in string.gmatch(paths,';?([^;]*);?') do
+			--print(search_path)
+			for path in finder(search_path,s) do
+				--print(path)
+				for __,requirer in ipairs(vars.requirers) do
+					--print(path)
+					local r,e=requirer(path,caller_env,...)
+					if r then
+						return r
+					else
+						table.insert(err,e)
+					end
 				end
-			else
-				table.insert(err,tostring(v))
 			end
 		end
-		error(table.concat(err,'\n'),2)
 	end
+	table.insert(err,'require:file not found:'..s..'\npaths='..paths..'\ncaller path='..(caller_env.FILE_PATH or 'not available'))
+	error(table.concat(err,'\n'),2)
 end
 
 --utilities
@@ -485,6 +516,8 @@ end
 function file(p,env,renv) --(re)loads file in path @p setting it's env to @env and the metatable of @env to {__index=@renv}
 	f=loadfile(p)
 	if not f then error('file',2) end
+	env=env or {}
+	env.FILE_PATH=p
 	set_env(f,env,renv)
 	return f
 end
