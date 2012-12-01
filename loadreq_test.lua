@@ -1,3 +1,4 @@
+---WARNING: outdated.
 ---test program for the loadreq API. Will write to dir /Q.
 
 if not loadreq then os.loadAPI('APIS/loadreq') end --don't reload the API; that would defeat the purpose of keeping track of already loaded stuff
