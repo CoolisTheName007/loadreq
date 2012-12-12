@@ -1,6 +1,9 @@
 ---require implementation in pure Lua for a sandbox environment, with support for globs and full directory tree search.
 --Licensed under the MIT license, whatever that is.
 --locals for fast access
+
+local i=1
+
 local fs_list=fs.list
 local fs_isDir=fs.isDir
 local fs_exists=fs.exists
@@ -132,10 +135,13 @@ end
 
 ---turns a glob into a table structure proper for iterPatterns.
 local function compact(g)
+	
 	local nl={}
 	local s1
 	local n=0
-	for c in string.gmatch(g,'[\\/]*([^/\\]*)[\\/]*') do
+	
+	-- print(g)
+	for c in string.gmatch(g,'[\\/]*([^/\\]+)[\\/]*') do
 		-- print(c)
 		if c:match('^[%w%s%.]*$') then
 			s1=s1 and s1..'/'..c or c
@@ -145,6 +151,7 @@ local function compact(g)
 			s1=nil
 		end
 	end
+	
 	if s1 then
 		-- print('s1=',s1)
 		if n==0 then
@@ -155,12 +162,6 @@ local function compact(g)
 			nl[n][3]=s1
 		end
 	end
-	-- for i,v in pairs(nl) do
-		-- print(i)
-		-- print(v[1])
-		-- print(v[2])
-	-- end
-	-- read()
 	return nl
 end
 
@@ -277,16 +278,18 @@ end
 
 --iterator over glob @g with ? replaced by @s
 searchGlob = function (g,s)
-	g=string.gsub(g,'%?',s)
-	--print(g)
 	
+	g=string.gsub(g,'%?',s)
+	
+	-- print(g)
 	local iter=iterGlob(g)
+	
 	local path
 	return function ()
 		repeat
 			path=iter()
 			if path then
-				if not fs_isDir(path) then
+				if not fs_isDir(path) then	
 					return path
 				end
 			else
@@ -344,7 +347,7 @@ function iterFiles(dir,depth)
 		return dir..'/'..name
 	end
 end
-function getNameExpansion(s) --returns name and expansion from a filepath @s
+function getNameExpansion(s) --returns name and expansion from a filepath @s; special cases: ''->'',nil; '.'-> '','';
 	--s string = filename
 	--returns: name, expansion
 	--Example
@@ -359,13 +362,20 @@ function getDir(s) --returns directory from filepath @s
 end
 
 --iterator over directory @p searching for @p...@s
+--
 searchTree = function (p,s)
-	if fs_isDir(p) then
+	if not p:match('%?') and fs_isDir(p) then
 		if p=='/' then p='' end
 		local iter=iterFiles(p)
 		local path
+		local count=os.clock()
 		return function ()
 			repeat
+				print(path)
+				if os.clock()-count>0.05 then --I have an huge filesystem
+					sleep(0)
+					count=os.clock()
+				end
 				path=iter()
 				if path then
 					if string.match(path,s..'$') and not string.match(path,'[^/]'..s..'$') then
@@ -386,13 +396,15 @@ end
 vars.finders={searchGlob,searchTree}
 vars.paths='?;?.lua;?/init.lua;APIS/?;APIS/?.lua;APIS/?/init.lua;packages/?;packages/?.lua;packages/?/init.lua;packages/?/?;packages/?/?.lua;/'
 
---helper vars for lua_requirer
-vars.required={} --to unrequire filepath s do require[s]=nil
-vars.required_envs={} --to prevent garbage collection
-vars.requiring={} --to throw error in case of recursive requiring;
-
+--helper vars for lua_requirer; other requirers may index theirs vars in loadreq.vars
+vars.lua_requirer={
+required={}, --to unrequire filepath s do require[s]=nil
+required_envs={}, --to prevent garbage collection
+requiring={}, --to throw error in case of recursive requiring;
+}
 
 --[[lua_requirer(path,cenv,env,renv,args)
+only requires files with no extension
 if the file has been loaded already returns previous value;
 if the file is being loaded returns nil, error_message
 else:
@@ -402,16 +414,25 @@ calls the function with unpack(@args) and returns and saves either
 	the function return
 	a shallow copy of the functions environment
 ]]
-function lua_requirer(path,cenv,env,renv,args)
+
+function lua_requirer(path,cenv,env,renv,rerun,args)
+	local err_prefix='lua_requirer:'
+	local vars=vars.lua_requirer
+	local _,ext=getNameExpansion(path)
+	if not (ext=='' or ext=='lua') then
+		return nil, err_prefix..'wrong extension:'..ext
+	end
+	
 	if vars.requiring[path] then
-		return nil, s..' in path '..path..' is being loaded'
-	elseif vars.required[path] then
+		return nil, err_prefix..'file is being loaded'
+	end
+	if not rerun and vars.required[path] then
 		return vars.required[path]
 	end
 	
 	local f,e=loadfile(path)
 	if not f then
-		return nil,'path='..path..'|lua_requirer:loadfile:'..e
+		return nil,err_prefix..'loadfile:'..e
 	end
 	env=env or {}
 	env.FILE_PATH=path
@@ -489,17 +510,17 @@ defaults to:
 		myAPI=require'myAPI' --@paths is 'myFolder/?;myFolder/?.lua;myFolder/?/init.lua;myFolder/?/?.lua;myFolder/?/?;myFolder'
 	4-@vars.paths as set in loadreq.vars.path
 -replaces '.' in @s by '/' and '..' by '.'
--for all globs in @paths:
- replaces '?' with @s
+--for all globs in @paths
  -	for all iterators in vars.finders iterates over the paths returned;
 	default iterators:
-		searchGlob: paths that match the glob
+		searchGlob: replaces '?' in the glob by @s paths and iterates over the filepaths that match the glob
 		searchTree: only for globs that are directory paths: paths that are in the directory tree of glob		
--for each path, calls the loaders sequentially until one succeds, 
-in which case it returns the first value that the loader returns;
-else accumulates the second value returned as an error message
--in case of failure, errors
+-for the first valid path, calls the loaders sequentially until one succeds, 
+in which case it returns the first value that the loader returns, else if it returns nil,e accumulates e as an error message
+else if all loaders fail errors immediatly, printing all error messages
+-in case of failure finding the path, errors with useful info
 ]]
+
 function require(s,paths,...)
 	local caller_env=getfenv(2)
 	if paths then
@@ -517,27 +538,46 @@ function require(s,paths,...)
 	s=string.gsub(s,'([^%.])%.([^%.])','%1/%2') 
 	s=string.gsub(s,'^%.([^%.])','/%1')
 	s=string.gsub(s,'%.%.','.')
+	
+	-- print(s)
 	local err={}
 	for _,finder in ipairs(vars.finders) do
-		for search_path in string.gmatch(paths,';?([^;]*);?') do
-			--print(search_path)
+
+		for search_path in string.gmatch(paths,';?([^;]+);?') do
+			
+			-- print(search_path)
 			for path in finder(search_path,s) do
-				--print(path)
+				
+				table.insert(err,'path='..path)
+				
+				-- print(path)
 				for __,requirer in ipairs(vars.requirers) do
-					--print(path)
+					
+					-- print(path)
 					local r,e=requirer(path,caller_env,...)
 					if r then
 						return r
 					else
+						
 						table.insert(err,e)
 					end
+					
 				end
+				
+				error(table.concat(err,'\n'),2) --this path can't be loaded, and yet it is a similar file? consider specifying path more or fixing bugs!
+				
 			end
 		end
 	end
+	
 	table.insert(err,'require:file not found:'..s..'\npaths='..paths..'\ncaller path='..(caller_env.FILE_PATH or 'not available'))
+	
 	error(table.concat(err,'\n'),2)
+	
 end
+
+
+
 
 --utilities
 function set_env(f,env,renv)--sets @f 's env to @env (default new table {}) and the metatable of @env to {__index=@renv (default _G)}
