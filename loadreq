@@ -403,7 +403,8 @@ required_envs={}, --to prevent garbage collection
 requiring={}, --to throw error in case of recursive requiring;
 }
 
---[[lua_requirer(path,cenv,env,renv,args)
+--[[lua_requirer(path,cenv,env,renv,rerun,args)
+if the rerun flag is true, reloads the file even if it done it before
 only requires files with no extension
 if the file has been loaded already returns previous value;
 if the file is being loaded returns nil, error_message
@@ -576,7 +577,23 @@ function require(s,paths,...)
 	
 end
 
+---runs filepath path with args ... using the same rules as @require for determining the globs to uses
+--e.g.
+--[[
+os.loadAPI('APIS/loadreq')
+loadreq.vars.paths=loadreq.vars.paths..';myFolder'
+--or
+REQUIRE_PATH='myFolder'
+--ect
+loadreq.run_lua('subFolder/subsubFolder/myFile.lua',arg1,arg2,...)
 
+]]
+function run_lua(path,...)
+	if type(path)~='string' then error('loadreq.run_lua:not a string:',path) end
+	path=path:gsub('%.','..')
+	path=path:gsub('%/','.')
+	return require(path,nil,nil,nil,true,{...})
+end
 
 
 --utilities
