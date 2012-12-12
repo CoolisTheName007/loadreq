@@ -420,7 +420,7 @@ function lua_requirer(path,cenv,env,renv,rerun,args)
 	local err_prefix='lua_requirer:'
 	local vars=vars.lua_requirer
 	local _,ext=getNameExpansion(path)
-	if not (ext=='' or ext=='lua') then
+	if not (ext=='' or ext=='lua' or ext==nil) then
 		return nil, err_prefix..'wrong extension:'..ext
 	end
 	
