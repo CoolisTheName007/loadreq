@@ -586,7 +586,6 @@ loadreq.vars.paths=loadreq.vars.paths..';myFolder'
 REQUIRE_PATH='myFolder'
 --ect
 loadreq.run_lua('subFolder/subsubFolder/myFile.lua',arg1,arg2,...)
-
 ]]
 function run_lua(path,...)
 	if type(path)~='string' then error('loadreq.run_lua:not a string:',path) end
