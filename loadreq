@@ -166,14 +166,17 @@ else if all loaders fail errors immediatly, printing all error messages
 -in case of failure finding the path, errors with useful info
 ]]
 
-function require(s,paths,...)
-	if log then log('loadreq','INFO','require: requiring %s',s) end
-	local caller_env=getfenv(2)
+
+
+
+local function _find(s,paths,caller_env)
+	local err={'_find: finding '..tostring(s)}
+	
 	if paths then
 	elseif caller_env.REQUIRE_PATH then
 		paths=caller_env.REQUIRE_PATH
 	elseif caller_env.PACKAGE_NAME and caller_env.FILE_PATH then
-		paths=sufix(string.match(caller_env.FILE_PATH,'^(.*'..caller_env.PACKAGE_NAME..')'))..';'..vars.paths
+		paths=sufix(string.match(caller_env.FILE_PATH,'^(.-'..caller_env.PACKAGE_NAME..')'))..';'..vars.paths
 	elseif	caller_env.FILE_PATH then
 		paths=sufix(getDir(caller_env.FILE_PATH))..';'..vars.paths
 	else
@@ -186,37 +189,69 @@ function require(s,paths,...)
 	s=string.gsub(s,'%.%.','.')
 	
 	-- print(s)
-	local err={}
 	local finders=vars.finders
 	
-	local finder
+	local finder,path
 	for i=1,#finders do
 		finder=finders[i]
 		for search_path in string.gmatch(paths,';?([^;]+);?') do
-			for path in finder(search_path,s) do
-				table.insert(err,'path='..path)
-				
-				for req_name,requirer in pairs(vars.requirers) do
-					local r,e=requirer(path,caller_env,...)
-					if r then
-						if log then log('loadreq','INFO','require: success in requiring %s;requirer=%s; path=%s',s,req_name,path) end
-						return r
-					else
-						table.insert(err,e)
-					end
-				end
-				
-				local serr=table.concat(err,'\n')
-				if log then log('loadreq','ERROR','require:%s',serr) end
-				error(serr,2) --this path can't be loaded, and yet it is a similar file? consider specifying path more or fixing bugs!
-			end
+			path=finder(search_path,s)()
+			if path then return path end
 		end
 	end
-	table.insert(err,'require:file not found:'..s..'\npaths='..paths..'\ncaller path='..(caller_env.FILE_PATH or 'not available'))
+	table.insert(err,'_find:file not found:'..s..'\ncaller path='..(caller_env.FILE_PATH or 'not available'))
 	local serr=table.concat(err,'\n')
-	if log then log('loadreq','ERROR','require:%s',serr) end
-	error(serr,2)
-	
+	if log then log('loadreq','ERROR','_find:%s',serr) end
+	return nil,serr
+end
+find=_find
+
+
+local function _require(s,paths,caller_env,...)
+	local err={}
+	table.insert(err,'loadreq:require: while requiring '..tostring(s))
+	local path,e=_find(s,paths,caller_env)
+	if path==nil then
+		table.insert(err,e)
+		local serr=table.concat(err,'\n')
+		
+		return nil, serr
+	end
+	for req_name,requirer in pairs(vars.requirers) do
+		local r,e=requirer(path,caller_env,...)
+		if r then
+			return r
+		else
+			table.insert(err,e)
+		end
+	end
+	return nil, table.concat(err,'\n')
+end
+
+local function require(s,paths,...)
+	local t,e=_require(s,paths,getfenv(2),...)
+	if t==nil then
+		if log then log('loadreq','ERROR','require:%s',e) end
+		error(e,2)
+	else
+		if log then log('loadreq','INFO','require: success in requiring %s',s) end
+		return t
+	end
+end
+
+function include(s,paths,...)
+	local caller_env=getfenv(2)
+	local t,e=_require(s,paths,caller_env,...)
+	if t then
+		for i,v in pairs(t) do
+			caller_env[i]=v
+			-- rawset(c_env,i,v)
+		end
+		return true
+	else
+		if log then log('loadreq','ERROR','include:%s',e) end
+		error(e,2)
+	end
 end
 
 ---runs filepath path with args ... using the same rules as @require for determining the globs to uses
@@ -316,25 +351,19 @@ function permaProtect(_t) --same as the os.loadAPI does
 	} )
 end
 
---module utilities
 
-function module(M) --copies env of the caller to table @M (default {}) and returns it
-	M=M or {}
-	for i,v in getfenv(2) do
-		M[i]=v
-	end
-	return M
-end
 
 
 --Platform dependant code here
 if fs.exists('packages/log/init.lua') then
 	rawset(_G,'require',require)
 	log=require'packages.log.init..lua'
+end
+if fs.exists('packages/search/init.lua') then
 	search=require'packages.search.init..lua'
 	vars.finders={}
 	table.insert(vars.finders,search.searchGlob)
-	table.insert(vars.finders,search.searchTree)
+	-- table.insert(vars.finders,search.searchTree)
 end
 
 env=getfenv() --this keeps the env from being collected to garbage
