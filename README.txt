@@ -33,6 +33,7 @@ require(s,paths,...)
 
 It is easy to define custom search functions and path loaders (which I call requirers), by altering loadreq.vars.finders and loadreq.vars.requirers .
 For instance, one could add a .json requirer.
+Also, if you also install my search API (see signature), loadreq uses the glob search function from it as default.
 loadreq comes with a lua_requirer function, that handles lua files:
 
 lua_requirer(path,cenv,env,renv,rerun,args)
