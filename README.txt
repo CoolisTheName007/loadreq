@@ -9,7 +9,7 @@ require(s,paths,...)
 		1-REQUIRE_PATH in the caller's path, if existent
 			Example (FILE_PATH='myFolder/myFolder2/myAPI.lua'):
 			REQUIRE_PATH='myFolder/?.lua'
-			myAPI=require'myFolder2.myAPI' 
+			myAPI=require'myFolder2.myAPI'
 		2-directory named PACKAGE_NAME in FILE_PATH, if defined in the caller's environment
 		with sufixes appended by @sufix and concatenated with @vars.paths.
 		FILE_PATH is set, for instance, by lua_loader in the files it loads.
@@ -44,5 +44,5 @@ lua_requirer(path,cenv,env,renv,rerun,args)
 	loads file in @path;
 	sets it's env to @env, default {} with metatable with __index set to @renv, default _G;
 	calls the function with unpack(@args) and returns and saves either
-	the function return
-	a shallow copy of the functions environment
+		the function return value;
+		if the function returns nil, a shallow copy of the functions environment.
