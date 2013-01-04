@@ -30,6 +30,7 @@ function loadFile(path,_reload) --@_reload forces reload
 	return vars.loaded[path]
 end
 
+---iterator; replaces '?' in g by s and returns the resulting path if it is a file.
 local function direct(g,s)
 	g=string.gsub(g,'%?',s)
 	return function()
@@ -48,6 +49,7 @@ requiring={}, --to throw error in case of recursive requiring;
 }
 
 --[[lua_requirer(path,cenv,env,renv,rerun,args)
+Accepts empty or .lua extensions. 
 if the rerun flag is true, reloads the file even if it done it before;
 if the file has been loaded already returns previous value;
 if the file is being loaded returns nil, error_message
@@ -208,7 +210,7 @@ end
 	with sufixes appended by @sufix and concatenated with @vars.paths.
 		Example (FILE_PATH='myFolder/runningFile'):
 		myAPI=require'myAPI' --@paths is 'myFolder/?;myFolder/?.lua;myFolder/?/init.lua;myFolder/?/?.lua;myFolder/?/?;myFolder'
-	4-@vars.paths as set in loadreq.vars.path
+	4-@vars.paths as set in loadreq.vars.paths
 -replaces '.' in @s by '/' and '..' by '.'
 --for all search_path in @paths
  -	for all iterators in vars.finders, iterates over the paths returned;
