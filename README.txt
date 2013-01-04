@@ -23,15 +23,15 @@ require(s,paths,...)
 		4-@vars.paths as set in loadreq.vars.paths
 	-replaces '.' in @s by '/' and '..' by '.'
 	--for all search_path in @paths
-	 -	for all iterators in vars.finders, iterates over the paths returned;
-		default iterator:	@direct:
-			---iterator; replaces '?' in the search_path by @s and returns the resulting path if it is a file.
-	-for the first valid path, calls the loaders sequentially until one succeds, 
+	 -	for all iterators in loadreq.vars.finders, iterates over the paths returned;
+		default iterator:	
+			@direct: replaces '?' in the search_path by @s and returns the resulting path if it is a file.
+	-for the first valid path, calls the loaders in loadreq.vars.requirers sequentially until one succeds,
 	in which case it returns the first value that the loader returns, else if it returns nil,e it accumulates e as an error message
 	if all loaders fail, errors immediatly, printing all error messages
 	-in case of failure finding the path, errors with the searched paths.
 
-As you can see from the definition of require, it is easy to define custom search functions and path loaders (which I call requirers).
+It is easy to define custom search functions and path loaders (which I call requirers), by altering loadreq.vars.finders and loadreq.vars.requirers .
 For instance, one could add a .json requirer.
 loadreq comes with a lua_requirer function, that handles lua files:
 
