@@ -48,8 +48,7 @@ requiring={}, --to throw error in case of recursive requiring;
 }
 
 --[[lua_requirer(path,cenv,env,renv,rerun,args)
-if the rerun flag is true, reloads the file even if it done it before
-only requires files with no extension
+if the rerun flag is true, reloads the file even if it done it before;
 if the file has been loaded already returns previous value;
 if the file is being loaded returns nil, error_message
 else:
@@ -129,45 +128,6 @@ function sufix(s)
 	return string.gsub('@/?;@/?.lua;@/?/init.lua;@/?/?.lua;@/?/?;@','@',s)
 end
 
---[[require(s,paths,...)
--acquires @paths variable;
-	@paths is a string, made of globs separated by ';'
-	globs can be normal paths or contain special characters ('?' and others ('?' was replaced by '#') as described here: see the unix part of the table at http://en.wikipedia.org/wiki/Glob_(programming))
-defaults to:
-	0-arg @paths
-		Example:
-		myAPI=require('myFolder2.myAPI','myFolder/?.lua') 
-	1-REQUIRE_PATH in the caller's path, if existent
-		Example:
-		REQUIRE_PATH='myFolder/?.lua'
-		myAPI=require'myFolder2.myAPI' 
-	2-directory named PACKAGE_NAME in FILE_PATH, if defined in the caller's environment
-	with sufixes appended by @sufix and concatenated with @vars.paths.
-	FILE_PATH is set, for instance, by lua_loader in the files it loads.
-		Example:
-		(FILE_PATH='myFolder/myFolder3/myFolder/runningFile')
-		PACKAGE_NAME='myFolder'
-		myAPI=require'myAPI' --@paths is 'myFolder/?;myFolder/?.lua;myFolder/?/init.lua;myFolder/?/?.lua;myFolder/?/?;myFolder'
-	3-directory of FILE_PATH, if defined
-	with sufixes appended by @sufix and concatenated with @vars.paths.
-		Example:
-		(FILE_PATH='myFolder/runningFile')
-		myAPI=require'myAPI' --@paths is 'myFolder/?;myFolder/?.lua;myFolder/?/init.lua;myFolder/?/?.lua;myFolder/?/?;myFolder'
-	4-@vars.paths as set in loadreq.vars.path
--replaces '.' in @s by '/' and '..' by '.'
---for all globs in @paths
- -	for all iterators in vars.finders iterates over the paths returned;
-	default iterators:
-		searchGlob: replaces '?' in the glob by @s paths and iterates over the filepaths that match the glob
-		searchTree: only for globs that are directory paths: paths that are in the directory tree of glob		
--for the first valid path, calls the loaders sequentially until one succeds, 
-in which case it returns the first value that the loader returns, else if it returns nil,e accumulates e as an error message
-else if all loaders fail errors immediatly, printing all error messages
--in case of failure finding the path, errors with useful info
-]]
-
-
-
 
 local function _find(s,paths,caller_env)
 	local err={'_find: finding '..tostring(s)}
@@ -228,6 +188,37 @@ local function _require(s,paths,caller_env,...)
 	return nil, table.concat(err,'\n')
 end
 
+--[[require(s,paths,...)
+@paths is a string of paths separated by ';' where there can be '?'
+-acquires @paths variable, by the following order;
+	0-arg @paths
+		Example (FILE_PATH='myFolder/myFolder2/myAPI.lua'):
+		myAPI=require('myFolder2.myAPI','myFolder/?.lua') 
+	1-REQUIRE_PATH in the caller's path, if existent
+		Example (FILE_PATH='myFolder/myFolder2/myAPI.lua'):
+		REQUIRE_PATH='myFolder/?.lua'
+		myAPI=require'myFolder2.myAPI' 
+	2-directory named PACKAGE_NAME in FILE_PATH, if defined in the caller's environment
+	with sufixes appended by @sufix and concatenated with @vars.paths.
+	FILE_PATH is set, for instance, by lua_loader in the files it loads.
+		Example (FILE_PATH='myFolder/myFolder3/myFolder/runningFile'):
+		PACKAGE_NAME='myFolder'
+		myAPI=require'myAPI' --@paths is 'myFolder/?;myFolder/?.lua;myFolder/?/init.lua;myFolder/?/?.lua;myFolder/?/?;myFolder'
+	3-directory of FILE_PATH, if defined
+	with sufixes appended by @sufix and concatenated with @vars.paths.
+		Example (FILE_PATH='myFolder/runningFile'):
+		myAPI=require'myAPI' --@paths is 'myFolder/?;myFolder/?.lua;myFolder/?/init.lua;myFolder/?/?.lua;myFolder/?/?;myFolder'
+	4-@vars.paths as set in loadreq.vars.path
+-replaces '.' in @s by '/' and '..' by '.'
+--for all search_path in @paths
+ -	for all iterators in vars.finders, iterates over the paths returned;
+	default iterator:	see @direct
+-for the first valid path, calls the loaders sequentially until one succeds, 
+in which case it returns the first value that the loader returns, else if it returns nil,e accumulates e as an error message
+els, if all loaders fail, errors immediatly, printing all error messages
+-in case of failure finding the path, errors with useful info
+]]
+
 local function require(s,paths,...)
 	local t,e=_require(s,paths,getfenv(2),...)
 	if t==nil then
@@ -239,6 +230,7 @@ local function require(s,paths,...)
 	end
 end
 
+---same as require, but copies the returned API to the caller's environment
 function include(s,paths,...)
 	local caller_env=getfenv(2)
 	local t,e=_require(s,paths,caller_env,...)
@@ -252,23 +244,6 @@ function include(s,paths,...)
 		if log then log('loadreq','ERROR','include:%s',e) end
 		error(e,2)
 	end
-end
-
----runs filepath path with args ... using the same rules as @require for determining the globs to uses
---e.g.
---[[
-os.loadAPI('APIS/loadreq')
-loadreq.vars.paths=loadreq.vars.paths..';myFolder'
---or
-REQUIRE_PATH='myFolder'
---ect
-loadreq.run_lua('subFolder/subsubFolder/myFile.lua',arg1,arg2,...)
-]]
-function run_lua(path,...)
-	if type(path)~='string' then error('loadreq.run_lua:not a string:',path) end
-	path=path:gsub('%.','..')
-	path=path:gsub('%/','.')
-	return require(path,nil,nil,nil,true,{...})
 end
 
 
@@ -365,5 +340,7 @@ if fs.exists('packages/search/init.lua') then
 	table.insert(vars.finders,search.searchGlob)
 	-- table.insert(vars.finders,search.searchTree)
 end
+rawset(_G,'require',require)
 
 env=getfenv() --this keeps the env from being collected to garbage
+return env
